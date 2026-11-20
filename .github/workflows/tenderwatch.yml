@@ -70,13 +70,18 @@ jobs:
           PY
           rm -f "$ENV_FILE"
       - name: Run
+        env:
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
-          MODE="${{ github.event.inputs.mode }}"
+          MODE="$INPUT_MODE"
           if [ -z "$MODE" ]; then
-            if [ "${{ github.event.schedule }}" = "0 6 * * 5" ]; then MODE=remind; else MODE=new; fi
+            if [ "$SCHEDULE" = "0 6 * * 5" ]; then MODE=remind; else MODE=new; fi
           fi
+          case "$MODE" in new|remind) ;; *) echo "::error::mode must be new or remind"; exit 1 ;; esac
           FLAGS=""
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then FLAGS="--dry-run"; fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then FLAGS="--dry-run"; fi
           python -m tenderwatch.run "$MODE" $FLAGS
       - name: Save sent ledger
         run: |

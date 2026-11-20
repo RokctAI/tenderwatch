@@ -3,6 +3,7 @@ so this module can move into the platform later unchanged."""
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 PROVINCES = [
@@ -16,9 +17,10 @@ def _parse_dt(s):
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def _province(buyer: str) -> str:
@@ -68,15 +70,21 @@ def _text(t: dict) -> str:
     return " ".join([t["number"], t["description"], t["detail"]]).lower()
 
 
+def _has_word(text: str, phrase: str) -> bool:
+    """Match at the start of a word, so "print" finds "printing" but "signs"
+    does not match "designs" and "cable" does not match "applicable"."""
+    return re.search(r"\b" + re.escape(phrase.lower()), text) is not None
+
+
 def matches(t: dict, flt: dict, now: datetime) -> bool:
     """True if the tender passes every filter that is set. Empty list = no limit."""
     closes = _parse_dt(t["closes"])
     if closes is None or closes < now + timedelta(days=flt.get("min_days_left", 0)):
         return False
     text = _text(t)
-    if flt.get("keywords_any") and not any(k.lower() in text for k in flt["keywords_any"]):
+    if flt.get("keywords_any") and not any(_has_word(text, k) for k in flt["keywords_any"]):
         return False
-    if any(k.lower() in text for k in flt.get("keywords_exclude", [])):
+    if any(_has_word(text, k) for k in flt.get("keywords_exclude", [])):
         return False
     if flt.get("categories") and t["category"] not in flt["categories"]:
         return False
