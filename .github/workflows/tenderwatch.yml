@@ -1,0 +1,91 @@
+name: tenderwatch
+
+on:
+  schedule:
+    - cron: '0 6 * * 2'  # Tue 06:00 UTC (08:00 SAST): new tenders, after the opportunities archive sync at 02:00
+    - cron: '0 6 * * 5'  # Fri 06:00 UTC (08:00 SAST): deadline reminders
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: new or remind
+        default: new
+      dry_run:
+        description: print instead of sending
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency: tenderwatch
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Load SMTP settings from Occultation
+        # Same pattern as play-deploy: production.env in RokctAI/Occultation is
+        # the single source of truth, read with MONOREPO_PAT. Values are masked
+        # and never echoed.
+        env:
+          GH_TOKEN: ${{ secrets.MONOREPO_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::MONOREPO_PAT is not available to this repo, so .env/production.env cannot be fetched from RokctAI/Occultation."
+            exit 1
+          fi
+          ENV_FILE="$RUNNER_TEMP/production.env"
+          if ! gh api "repos/RokctAI/Occultation/contents/.env/production.env" -H "Accept: application/vnd.github.v3.raw" > "$ENV_FILE"; then
+            rm -f "$ENV_FILE"
+            echo "::error::Failed to fetch .env/production.env from RokctAI/Occultation (MONOREPO_PAT expired or missing repo access?)."
+            exit 1
+          fi
+          python3 - "$ENV_FILE" <<'PY'
+          import os, re, sys
+          keys = ("SMTP_SERVER", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_USE_TLS", "TENDER_EMAIL_TO")
+          found = {}
+          for line in open(sys.argv[1], encoding="utf-8"):
+              m = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)", line.rstrip("\r\n"))
+              if m and m.group(1) in keys and m.group(1) not in found:
+                  v = m.group(2).strip()
+                  if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                      v = v[1:-1]
+                  if v:
+                      found[m.group(1)] = v
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              for k, v in found.items():
+                  if k not in ("SMTP_PORT", "SMTP_USE_TLS"):
+                      print(f"::add-mask::{v}")
+                  env.write(f"{k}={v}\n")
+          missing = [k for k in keys[:4] if k not in found]
+          if missing:
+              print("::error::Missing in Occultation .env/production.env: " + ", ".join(missing))
+              sys.exit(1)
+          print("Loaded: " + ", ".join(sorted(found)))
+          PY
+          rm -f "$ENV_FILE"
+      - name: Run
+        env:
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          MODE="$INPUT_MODE"
+          if [ -z "$MODE" ]; then
+            if [ "$SCHEDULE" = "0 6 * * 5" ]; then MODE=remind; else MODE=new; fi
+          fi
+          case "$MODE" in new|remind) ;; *) echo "::error::mode must be new or remind"; exit 1 ;; esac
+          FLAGS=""
+          if [ "$INPUT_DRY_RUN" = "true" ]; then FLAGS="--dry-run"; fi
+          python -m tenderwatch.run "$MODE" $FLAGS
+      - name: Save sent ledger
+        run: |
+          git config user.name "rokctbot[bot]"
+          git config user.email "rokctbot@users.noreply.github.com"
+          git add state/sent.json
+          git diff --staged --quiet || { git commit -m "chore: update sent tenders [skip ci]"; git push; }
