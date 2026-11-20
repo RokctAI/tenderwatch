@@ -34,11 +34,14 @@ Edit `filters.json` on GitHub. An empty list means "no limit".
 
 ## Setup (once)
 
-1. Add these **organisation** secrets (values are in occultation `.env/production.env`):
-   `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`.
-   Optional `TENDER_EMAIL_TO` (otherwise mail goes to `SMTP_USERNAME`).
-2. Give this repo access to those org secrets.
-3. Actions > tenderwatch > Run workflow with `dry_run` ticked to see the email in the log;
+The SMTP settings are not stored here. Each run reads `SMTP_SERVER`, `SMTP_PORT`,
+`SMTP_USERNAME`, `SMTP_PASSWORD` and `SMTP_USE_TLS` (and optional `TENDER_EMAIL_TO`,
+otherwise mail goes to `SMTP_USERNAME`) from RokctAI/Occultation `.env/production.env`
+using the `MONOREPO_PAT` org secret, the same way `play-deploy` reads package names.
+Values are masked in the logs.
+
+1. Make sure `MONOREPO_PAT` is available to this repo.
+2. Actions > tenderwatch > Run workflow with `dry_run` ticked to see the email in the log;
    untick it to send for real.
 
 ## Layout
